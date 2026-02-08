@@ -378,3 +378,7 @@ setInterval(gameTick, TICK_INTERVAL);
 console.log(`Game loop running at ${TICK_RATE} ticks/second`);
 console.log(`Map size: ${MAP_WIDTH}x${MAP_HEIGHT}`);
 console.log(`Max players: ${MAX_PLAYERS}`);
+
+server.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
+});
