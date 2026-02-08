@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Snake Multiplayer</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Menu Overlay -->
+  <div id="menu" class="menu">
+    <div class="menu-content">
+      <h1>🐍 Snake Multiplayer</h1>
+      <p class="subtitle">Classic grid-based multiplayer snake</p>
+      
+      <div class="input-group">
+        <label for="nickname">Nickname</label>
+        <input type="text" id="nickname" maxlength="20" placeholder="Enter your name" value="Player">
+      </div>
+      
+      <button id="joinBtn" class="btn-primary">Join Game</button>
+      
+      <div id="status" class="status"></div>
+      
+      <div class="instructions">
+        <h3>How to Play</h3>
+        <ul>
+          <li>Use <strong>Arrow Keys</strong> or <strong>WASD</strong> to move</li>
+          <li>Eat coins to grow your snake</li>
+          <li>Avoid walls and other snakes</li>
+          <li>Camera follows your snake</li>
+        </ul>
+      </div>
+      
+      <div class="server-config">
+        <label for="serverUrl">Server URL (advanced)</label>
+        <input type="text" id="serverUrl" value="ws://localhost:3001" placeholder="ws://localhost:3001">
+      </div>
+    </div>
+  </div>
+  
+  <!-- Game Canvas -->
+  <canvas id="gameCanvas"></canvas>
+  
+  <!-- Scoreboard -->
+  <div id="scoreboard" class="scoreboard hidden">
+    <h3>Players</h3>
+    <div id="scoreList"></div>
+  </div>
+  
+  <!-- Back to Menu Button -->
+  <button id="backToMenuBtn" class="back-to-menu-btn hidden">← Back to Menu</button>
+  
+  <!-- Scripts -->
+  <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>

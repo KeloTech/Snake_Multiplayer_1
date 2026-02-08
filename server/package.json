@@ -1,0 +1,16 @@
+{
+  "name": "snake-multiplayer-server",
+  "version": "1.0.0",
+  "description": "Server-authoritative multiplayer Snake game",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "dependencies": {
+    "socket.io": "^4.6.0"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
