@@ -50,7 +50,12 @@ function resizeCanvas() {
 
 // Connect to server
 function connect() {
-  const serverUrl = serverUrlInput.value.trim() || 'ws://localhost:3001';
+  const serverUrl =
+  serverUrlInput.value.trim() ||
+  (location.hostname === "localhost"
+    ? "ws://localhost:3001"
+    : "wss://snake-multiplayer-1.onrender.com");
+
   
   statusDiv.textContent = 'Connecting...';
   statusDiv.className = 'status';
