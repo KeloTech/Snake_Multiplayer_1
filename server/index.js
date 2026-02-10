@@ -2,8 +2,10 @@ const { Server } = require('socket.io');
 
 // Configuration
 const PORT = process.env.PORT || 3001;
-const TICK_RATE = 12; // ticks per second
+const TICK_RATE = 24; // ticks per second (increased for input responsiveness)
 const TICK_INTERVAL = 1000 / TICK_RATE;
+const MOVE_EVERY_N_TICKS = 2; // Snake moves every 2 ticks = 12 moves/sec (same speed as before)
+const SNAPSHOT_EVERY_N_TICKS = 2; // Broadcast snapshots every 2 ticks = 12 snapshots/sec
 const MAP_WIDTH = 120;
 const MAP_HEIGHT = 120;
 const MAX_PLAYERS_PER_ROOM = 15;
@@ -590,131 +592,145 @@ function removePlayerFromRoom(socketId, roomId) {
 function updateRoom(roomState) {
   roomState.tick++;
   
-  // Move all snakes
+  // ALWAYS process direction changes (responsive input)
   for (const [_, player] of roomState.players) {
     if (!player.alive) continue;
     
-    // Apply validated direction
+    // Apply validated direction every tick for instant response
     if (player.nextDir && player.nextDir !== OPPOSITES[player.dir]) {
       player.dir = player.nextDir;
     }
-    
-    // Calculate new head position
-    const head = player.snake[0];
-    const dir = DIRS[player.dir];
-    const newHead = {
-      x: head.x + dir.x,
-      y: head.y + dir.y
-    };
-    
-    // Check wall collision
-    if (newHead.x < 0 || newHead.x >= MAP_WIDTH || 
-        newHead.y < 0 || newHead.y >= MAP_HEIGHT) {
-      player.alive = false;
-      continue;
+  }
+  
+  // Only move snakes every N ticks (maintains original speed)
+  const shouldMove = (roomState.tick % MOVE_EVERY_N_TICKS === 0);
+  
+  if (shouldMove) {
+    // Move all snakes
+    for (const [_, player] of roomState.players) {
+      if (!player.alive) continue;
+      
+      // Calculate new head position
+      const head = player.snake[0];
+      const dir = DIRS[player.dir];
+      const newHead = {
+        x: head.x + dir.x,
+        y: head.y + dir.y
+      };
+      
+      // Check wall collision
+      if (newHead.x < 0 || newHead.x >= MAP_WIDTH || 
+          newHead.y < 0 || newHead.y >= MAP_HEIGHT) {
+        player.alive = false;
+        continue;
+      }
+      
+      // Check coin collision
+      let ateFood = false;
+      const coinIndex = roomState.coins.findIndex(coin => 
+        coin.x === newHead.x && coin.y === newHead.y
+      );
+      
+      if (coinIndex !== -1) {
+        ateFood = true;
+        roomState.coins.splice(coinIndex, 1);
+        player.score++;
+      }
+      
+      // Check food orb collision
+      const orbIndex = roomState.foodOrbs.findIndex(orb =>
+        orb.x === newHead.x && orb.y === newHead.y
+      );
+      
+      if (orbIndex !== -1) {
+        ateFood = true;
+        const orb = roomState.foodOrbs.splice(orbIndex, 1)[0];
+        player.score += orb.value;
+      }
+      
+      // Move snake
+      player.snake.unshift(newHead);
+      if (!ateFood) {
+        player.snake.pop();
+      }
     }
     
-    // Check coin collision
-    let ateFood = false;
-    const coinIndex = roomState.coins.findIndex(coin => 
-      coin.x === newHead.x && coin.y === newHead.y
-    );
-    
-    if (coinIndex !== -1) {
-      ateFood = true;
-      roomState.coins.splice(coinIndex, 1);
-      player.score++;
-    }
-    
-    // Check food orb collision
-    const orbIndex = roomState.foodOrbs.findIndex(orb =>
-      orb.x === newHead.x && orb.y === newHead.y
-    );
-    
-    if (orbIndex !== -1) {
-      ateFood = true;
-      const orb = roomState.foodOrbs.splice(orbIndex, 1)[0];
-      player.score += orb.value;
-    }
-    
-    // Move snake
-    player.snake.unshift(newHead);
-    if (!ateFood) {
-      player.snake.pop();
+    // Check weapon pickups (after movement)
+    for (const [_, player] of roomState.players) {
+      if (player.alive) {
+        checkWeaponPickup(player, roomState);
+      }
     }
   }
   
-  // Check weapon pickups (after movement)
-  for (const [_, player] of roomState.players) {
-    if (player.alive) {
-      checkWeaponPickup(player, roomState);
-    }
-  }
-  
-  // Update projectiles
+  // Update projectiles every tick (they're fast-moving)
   updateProjectiles(roomState, io);
   
-  // Check collisions
-  const alivePlayers = Array.from(roomState.players.values()).filter(p => p.alive);
-  
-  for (const player of alivePlayers) {
-    const head = player.snake[0];
+  // Check collisions (only on movement ticks)
+  if (shouldMove) {
+    const alivePlayers = Array.from(roomState.players.values()).filter(p => p.alive);
     
-    // Check self collision
-    for (let i = 1; i < player.snake.length; i++) {
-      const segment = player.snake[i];
-      if (head.x === segment.x && head.y === segment.y) {
-        player.alive = false;
-        break;
-      }
-    }
-    
-    if (!player.alive) continue;
-    
-    // Check collision with other snakes
-    for (const other of alivePlayers) {
-      if (other.id === player.id) continue;
+    for (const player of alivePlayers) {
+      const head = player.snake[0];
       
-      // Check head-to-head collision
-      const otherHead = other.snake[0];
-      if (head.x === otherHead.x && head.y === otherHead.y) {
-        player.alive = false;
-        other.alive = false;
-        break;
-      }
-      
-      // Check head-to-body collision
-      for (const segment of other.snake) {
+      // Check self collision
+      for (let i = 1; i < player.snake.length; i++) {
+        const segment = player.snake[i];
         if (head.x === segment.x && head.y === segment.y) {
           player.alive = false;
           break;
         }
       }
       
-      if (!player.alive) break;
-    }
-  }
-  
-  // Notify dead players and release weapons
-  for (const [id, player] of roomState.players) {
-    if (!player.alive && !player.waitingToRespawn) {
-      player.waitingToRespawn = true;
+      if (!player.alive) continue;
       
-      // Release weapon at death position
-      if (player.weapon) {
-        releaseWeapon(player, roomState);
+      // Check collision with other snakes
+      for (const other of alivePlayers) {
+        if (other.id === player.id) continue;
+        
+        // Check head-to-head collision
+        const otherHead = other.snake[0];
+        if (head.x === otherHead.x && head.y === otherHead.y) {
+          player.alive = false;
+          other.alive = false;
+          break;
+        }
+        
+        // Check head-to-body collision
+        for (const segment of other.snake) {
+          if (head.x === segment.x && head.y === segment.y) {
+            player.alive = false;
+            break;
+          }
+        }
+        
+        if (!player.alive) break;
       }
-      
-      io.to(id).emit('death', { 
-        message: 'You died!',
-        score: player.score,
-        length: player.snake.length
-      });
     }
   }
   
-  // Maintain coins
-  maintainCoins(roomState);
+  // Notify dead players and release weapons (only on movement ticks)
+  if (shouldMove) {
+    for (const [id, player] of roomState.players) {
+      if (!player.alive && !player.waitingToRespawn) {
+        player.waitingToRespawn = true;
+        
+        // Release weapon at death position
+        if (player.weapon) {
+          releaseWeapon(player, roomState);
+        }
+        
+        io.to(id).emit('death', { 
+          message: 'You died!',
+          score: player.score,
+          length: player.snake.length
+        });
+      }
+    }
+    
+    // Maintain coins
+    maintainCoins(roomState);
+  }
 }
 
 // Broadcast room snapshot
@@ -753,7 +769,11 @@ function broadcastRoom(roomState, roomId) {
 function globalGameTick() {
   for (const [roomId, roomState] of rooms) {
     updateRoom(roomState);
-    broadcastRoom(roomState, roomId);
+    
+    // Broadcast snapshots at reduced rate (every N ticks)
+    if (roomState.tick % SNAPSHOT_EVERY_N_TICKS === 0) {
+      broadcastRoom(roomState, roomId);
+    }
   }
 }
 
