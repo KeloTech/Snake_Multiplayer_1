@@ -33,8 +33,9 @@
       </div>
       
       <div class="server-config">
-        <label for="serverUrl">Server URL (advanced)</label>
+        <label for="serverUrl">Server URL</label>
         <input type="text" id="serverUrl" value="ws://localhost:3001" placeholder="ws://localhost:3001">
+        <p class="server-hint">💡 Use <strong>ws://localhost:3001</strong> for local testing or <strong>https://snake-multiplayer-1.onrender.com/</strong> for production</p>
       </div>
     </div>
   </div>
@@ -50,6 +51,19 @@
   
   <!-- Back to Menu Button -->
   <button id="backToMenuBtn" class="back-to-menu-btn hidden">← Back to Menu</button>
+  
+  <!-- Death Screen -->
+  <div id="deathScreen" class="death-screen hidden">
+    <div class="death-content">
+      <h1 class="death-title">💀 You Died!</h1>
+      <div class="death-stats">
+        <p class="death-stat">Score: <span id="deathScore">0</span></p>
+        <p class="death-stat">Length: <span id="deathLength">0</span></p>
+      </div>
+      <button id="respawnBtn" class="btn-respawn">Respawn</button>
+      <button id="quitBtn" class="btn-quit">Back to Menu</button>
+    </div>
+  </div>
   
   <!-- Scripts -->
   <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
