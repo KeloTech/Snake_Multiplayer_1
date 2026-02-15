@@ -13,6 +13,20 @@ const COIN_TARGET = 30;
 const MIN_SPAWN_DISTANCE = 15;
 const INITIAL_SNAKE_LENGTH = 3;
 
+// Bot Configuration
+const BOT_COUNT = 4; // Number of bots per room
+const BOT_LOOKAHEAD_STEPS = 3; // How far ahead bots look
+const BOT_SPACE_CHECK_DEPTH = 5; // How deep to check free space
+const BOT_MISTAKE_PROBABILITY_MIN = 0.03; // 3% minimum mistake chance
+const BOT_MISTAKE_PROBABILITY_MAX = 0.08; // 8% maximum mistake chance
+const BOT_FOOD_WEIGHT_MIN = 0.3; // Min food attraction
+const BOT_FOOD_WEIGHT_MAX = 0.7; // Max food attraction
+const BOT_EDGE_PENALTY_MIN = 5; // Min penalty for being near edges
+const BOT_EDGE_PENALTY_MAX = 15; // Max penalty for being near edges
+const BOT_RISK_MIN = 0.3; // Conservative
+const BOT_RISK_MAX = 0.8; // Aggressive
+const BOT_MOVE_EVERY_N_TICKS = 5; // Bots decide direction every N ticks (slower = less spamming)
+
 // Weapon Configuration
 const WEAPON_TYPES = ['SWORD', 'GUN', 'ROCKET'];
 const SWORD_RANGE = 1; // tiles
@@ -46,6 +60,25 @@ const OPPOSITES = {
 const rooms = new Map(); // roomId -> RoomState
 const socketToRoom = new Map(); // socketId -> roomId
 let nextRoomNumber = 1;
+let nextBotId = 1;
+
+// Bot names for variety
+const BOT_NAMES = [
+  'BotAlpha', 'BotBeta', 'BotGamma', 'BotDelta',
+  'SnakeBot', 'AI-Snake', 'CyberSnake', 'RoboSnake',
+  'ZigZag', 'Hunter', 'Dasher', 'Slither'
+];
+
+// Bot personality class
+class BotPersonality {
+  constructor() {
+    this.mistakeProbability = Math.random() * (BOT_MISTAKE_PROBABILITY_MAX - BOT_MISTAKE_PROBABILITY_MIN) + BOT_MISTAKE_PROBABILITY_MIN;
+    this.foodWeight = Math.random() * (BOT_FOOD_WEIGHT_MAX - BOT_FOOD_WEIGHT_MIN) + BOT_FOOD_WEIGHT_MIN;
+    this.edgePenalty = Math.random() * (BOT_EDGE_PENALTY_MAX - BOT_EDGE_PENALTY_MIN) + BOT_EDGE_PENALTY_MIN;
+    this.riskiness = Math.random() * (BOT_RISK_MAX - BOT_RISK_MIN) + BOT_RISK_MIN;
+    this.seed = Math.random();
+  }
+}
 
 // Room structure
 function createRoom(roomId) {
@@ -58,7 +91,8 @@ function createRoom(roomId) {
     weapons: new Map(), // weaponType -> { owner: socketId | null, position: {x,y} | null, lastUsed: timestamp }
     projectiles: [], // { id, type, x, y, vx, vy, ownerId, distanceTraveled }
     nextProjectileId: 1,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    bots: [] // Bot IDs in this room
   };
   
   // Initialize coins for the room
@@ -76,11 +110,15 @@ function createRoom(roomId) {
   });
   
   console.log(`✨ Room created: ${roomId}`);
+  
+  // Spawn bots after a short delay (let initial coins/weapons settle)
+  setTimeout(() => spawnBots(room), 500);
+  
   return room;
 }
 
 // Player structure
-function createPlayer(socketId, name, spawnPos) {
+function createPlayer(socketId, name, spawnPos, isBot = false) {
   return {
     id: socketId,
     name: sanitizeName(name),
@@ -93,7 +131,9 @@ function createPlayer(socketId, name, spawnPos) {
     waitingToRespawn: false,
     weapon: null, // 'SWORD' | 'GUN' | 'ROCKET' | null
     weaponCooldown: 0,
-    ammo: 0 // Current ammo for equipped weapon
+    ammo: 0, // Current ammo for equipped weapon
+    isBot: isBot,
+    botPersonality: isBot ? new BotPersonality() : null
   };
 }
 
@@ -228,16 +268,311 @@ function maintainCoins(roomState) {
 // Respawn player
 function respawnPlayer(player, roomState) {
   const spawnPos = findSpawnPosition(roomState);
+  if (!spawnPos) {
+    console.error(`❌ Could not find spawn position for ${player.name}`);
+    // Try a random position as last resort
+    spawnPos = {
+      x: Math.floor(Math.random() * (MAP_WIDTH - 20)) + 10,
+      y: Math.floor(Math.random() * (MAP_HEIGHT - 20)) + 10
+    };
+  }
+  
   player.snake = spawnSnake(spawnPos);
   player.dir = 'RIGHT';
   player.nextDir = 'RIGHT';
   player.alive = true;
+  player.waitingToRespawn = false;
   
   // Release weapon if player had one
   if (player.weapon) {
     releaseWeapon(player, roomState);
   }
+  
+  console.log(`✅ Respawned ${player.name} at (${spawnPos.x}, ${spawnPos.y}), alive=${player.alive}, snake=${player.snake.length}`);
 }
+
+// ===== BOT AI SYSTEM =====
+
+// Spawn bots in room
+function spawnBots(roomState) {
+  for (let i = 0; i < BOT_COUNT; i++) {
+    const botId = `bot-${nextBotId++}`;
+    const botName = BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)] + Math.floor(Math.random() * 100);
+    const spawnPos = findSpawnPosition(roomState);
+    
+    const bot = createPlayer(botId, botName, spawnPos, true);
+    bot.snake = spawnSnake(spawnPos);
+    
+    roomState.players.set(botId, bot);
+    roomState.bots.push(botId);
+    
+    console.log(`🤖 Bot spawned: ${botName} (${botId}) in ${roomState.id}`);
+  }
+}
+
+// Check if position is safe (no collision) - generic, optionally ignore one player entirely
+function isSafe(x, y, roomState, ignoreBotId = null) {
+  if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) return false;
+  
+  for (const [id, player] of roomState.players) {
+    if (id === ignoreBotId) continue;
+    if (!player.alive) continue;
+    for (const segment of player.snake) {
+      if (segment.x === x && segment.y === y) return false;
+    }
+  }
+  return true;
+}
+
+// Safe for a specific player to MOVE to (x,y). Treats that player's tail as vacated (tail moves).
+function isSafeForMove(movingPlayer, x, y, roomState) {
+  if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) return false;
+  
+  for (const [id, player] of roomState.players) {
+    if (!player.alive) continue;
+    const snake = player.snake;
+    const tailIndex = snake.length - 1;
+    for (let i = 0; i < snake.length; i++) {
+      if (movingPlayer.id === id && i === tailIndex) continue; // moving player's tail vacates
+      const seg = snake[i];
+      if (seg.x === x && seg.y === y) return false;
+    }
+  }
+  return true;
+}
+
+// Count free space using simple flood fill (limited depth). Uses moving bot for tail-vacated check.
+function countFreeSpace(startX, startY, roomState, bot, depth = BOT_SPACE_CHECK_DEPTH) {
+  const visited = new Set();
+  const queue = [{x: startX, y: startY, d: 0}];
+  visited.add(`${startX},${startY}`);
+  let count = 0;
+  
+  while (queue.length > 0 && count < 100) {
+    const {x, y, d} = queue.shift();
+    if (d >= depth) continue;
+    count++;
+    
+    const dirs = [{x:0,y:-1}, {x:0,y:1}, {x:-1,y:0}, {x:1,y:0}];
+    for (const dir of dirs) {
+      const nx = x + dir.x;
+      const ny = y + dir.y;
+      const key = `${nx},${ny}`;
+      
+      if (!visited.has(key) && isSafeForMove(bot, nx, ny, roomState)) {
+        visited.add(key);
+        queue.push({x: nx, y: ny, d: d + 1});
+      }
+    }
+  }
+  
+  return count;
+}
+
+// Find nearest food (coin or orb)
+function findNearestFood(headX, headY, roomState) {
+  let nearest = null;
+  let minDist = Infinity;
+  
+  // Check coins
+  for (const coin of roomState.coins) {
+    const dist = Math.abs(coin.x - headX) + Math.abs(coin.y - headY);
+    if (dist < minDist) {
+      minDist = dist;
+      nearest = coin;
+    }
+  }
+  
+  // Check food orbs
+  for (const orb of roomState.foodOrbs) {
+    const dist = Math.abs(orb.x - headX) + Math.abs(orb.y - headY);
+    if (dist < minDist) {
+      minDist = dist;
+      nearest = orb;
+    }
+  }
+  
+  return nearest;
+}
+
+// Calculate edge distance (how close to walls)
+function getEdgeDistance(x, y) {
+  return Math.min(x, MAP_WIDTH - 1 - x, y, MAP_HEIGHT - 1 - y);
+}
+
+// Get all possible directions
+function getPossibleDirections(currentDir) {
+  const all = ['UP', 'DOWN', 'LEFT', 'RIGHT'];
+  const opposite = OPPOSITES[currentDir];
+  return all.filter(d => d !== opposite);
+}
+
+// Bot AI: Choose best direction
+function chooseBotDirection(bot, roomState) {
+  const head = bot.snake[0];
+  const personality = bot.botPersonality;
+  const possibleDirs = getPossibleDirections(bot.dir);
+  
+  // Score each direction
+  const scores = [];
+  
+  for (const dir of possibleDirs) {
+    const dirVec = DIRS[dir];
+    const newX = head.x + dirVec.x;
+    const newY = head.y + dirVec.y;
+    
+    let score = 0;
+    
+    // Hard reject: immediate collision (use isSafeForMove so we don't treat own tail as obstacle)
+    if (!isSafeForMove(bot, newX, newY, roomState)) {
+      score = -1000;
+    } else {
+      // Safety: count free space ahead
+      const freeSpace = countFreeSpace(newX, newY, roomState, bot);
+      score += freeSpace * (1 + personality.riskiness);
+      
+      // Food attraction: reduce distance to nearest food
+      const nearestFood = findNearestFood(head.x, head.y, roomState);
+      if (nearestFood) {
+        const currentDist = Math.abs(nearestFood.x - head.x) + Math.abs(nearestFood.y - head.y);
+        const newDist = Math.abs(nearestFood.x - newX) + Math.abs(nearestFood.y - newY);
+        const foodScore = (currentDist - newDist) * 10 * personality.foodWeight;
+        score += foodScore;
+      }
+      
+      // Edge penalty: avoid getting too close to walls
+      const edgeDist = getEdgeDistance(newX, newY);
+      if (edgeDist < 5) {
+        score -= (5 - edgeDist) * personality.edgePenalty;
+      }
+      
+      // Random variation (personality)
+      score += (Math.random() - 0.5) * 5 * personality.seed;
+      
+      // Look ahead: check if next move would be safe
+      const nextX = newX + dirVec.x;
+      const nextY = newY + dirVec.y;
+      if (isSafeForMove(bot, nextX, nextY, roomState)) {
+        score += 10; // Bonus for moves that keep options open
+      }
+    }
+    
+    scores.push({ dir, score });
+  }
+  
+  // Sort by score
+  scores.sort((a, b) => b.score - a.score);
+  
+  // Mistake: occasionally pick suboptimal move
+  const makeMistake = Math.random() < personality.mistakeProbability;
+  
+  if (makeMistake && scores.length > 1 && scores[1].score > -500) {
+    // Pick 2nd best or random valid move
+    const validMoves = scores.filter(s => s.score > -500);
+    if (validMoves.length > 1) {
+      return validMoves[Math.floor(Math.random() * validMoves.length)].dir;
+    }
+  }
+  
+  // Return best move
+  return scores[0].score > -500 ? scores[0].dir : bot.dir;
+}
+
+// Bot weapon usage decision
+function botDecideWeaponUse(bot, roomState) {
+  if (!bot.weapon || !bot.alive) return false;
+  
+  const personality = bot.botPersonality;
+  const head = bot.snake[0];
+  
+  if (bot.weapon === 'SWORD') {
+    // Check if any enemy nearby
+    for (const [id, player] of roomState.players) {
+      if (id === bot.id || !player.alive) continue;
+      
+      for (const segment of player.snake) {
+        const dist = Math.abs(segment.x - head.x) + Math.abs(segment.y - head.y);
+        if (dist <= SWORD_RANGE) {
+          // 70% chance to strike if enemy in range
+          return Math.random() < 0.7;
+        }
+      }
+    }
+  } else if (bot.weapon === 'GUN' && bot.ammo > 0) {
+    // Find target in firing direction
+    const dirVec = DIRS[bot.dir];
+    for (let i = 1; i <= 15; i++) {
+      const checkX = head.x + dirVec.x * i;
+      const checkY = head.y + dirVec.y * i;
+      
+      for (const [id, player] of roomState.players) {
+        if (id === bot.id || !player.alive) continue;
+        
+        for (const segment of player.snake) {
+          if (segment.x === checkX && segment.y === checkY) {
+            // Found target in line of fire - shoot with some probability
+            return Math.random() < 0.4 * personality.riskiness;
+          }
+        }
+      }
+    }
+  } else if (bot.weapon === 'ROCKET' && bot.ammo > 0) {
+    // Use rocket if multiple enemies nearby or low on ammo
+    let nearbyEnemies = 0;
+    for (const [id, player] of roomState.players) {
+      if (id === bot.id || !player.alive) continue;
+      const playerHead = player.snake[0];
+      const dist = Math.abs(playerHead.x - head.x) + Math.abs(playerHead.y - head.y);
+      if (dist < 15) nearbyEnemies++;
+    }
+    
+    // More likely to fire if multiple enemies or last rocket
+    const urgency = nearbyEnemies > 1 || bot.ammo === 1;
+    return urgency && Math.random() < 0.2;
+  }
+  
+  return false;
+}
+
+// Update bot inputs (direction only every BOT_MOVE_EVERY_N_TICKS to reduce spamming)
+function updateBotInputs(roomState) {
+  const shouldDecideMove = (roomState.tick % BOT_MOVE_EVERY_N_TICKS) === 0;
+  
+  for (const botId of roomState.bots) {
+    const bot = roomState.players.get(botId);
+    if (!bot || !bot.alive) continue; // Only update alive bots
+    
+    if (shouldDecideMove) {
+      const bestDir = chooseBotDirection(bot, roomState);
+      bot.nextDir = bestDir;
+    }
+    
+    // Decide weapon usage
+    if (botDecideWeaponUse(bot, roomState)) {
+      // Trigger weapon action
+      const now = Date.now();
+      switch (bot.weapon) {
+        case 'SWORD':
+          if (now - bot.weaponCooldown >= SWORD_COOLDOWN) {
+            handleSwordStrike(bot, roomState, io);
+          }
+          break;
+        case 'GUN':
+          if (now - bot.weaponCooldown >= GUN_COOLDOWN) {
+            handleGunFire(bot, roomState, io);
+          }
+          break;
+        case 'ROCKET':
+          if (now - bot.weaponCooldown >= ROCKET_COOLDOWN) {
+            handleRocketFire(bot, roomState, io);
+          }
+          break;
+      }
+    }
+  }
+}
+
+// Auto-respawn dead bots (REMOVED - now handled inline in updateRoom)
 
 // Release weapon (drop at position)
 function releaseWeapon(player, roomState) {
@@ -327,6 +662,23 @@ function cutSnake(player, cutIndex, roomState) {
   player.score = Math.max(0, player.score - removedSegments.length);
   
   console.log(`✂️  Snake cut: ${player.name} lost ${removedSegments.length} segments`);
+}
+
+// Drop all snake segments as food orbs when snake dies
+function dropAllSegmentsAsFoodOrbs(player, roomState) {
+  if (!player.snake || player.snake.length === 0) return;
+  
+  // Convert all segments to food orbs (skip head to avoid clutter at death position)
+  for (let i = 1; i < player.snake.length; i++) {
+    const segment = player.snake[i];
+    roomState.foodOrbs.push({
+      x: segment.x,
+      y: segment.y,
+      value: 1
+    });
+  }
+  
+  console.log(`💀 ${player.name} dropped ${player.snake.length - 1} food orbs`);
 }
 
 // Sword strike
@@ -592,6 +944,9 @@ function removePlayerFromRoom(socketId, roomId) {
 function updateRoom(roomState) {
   roomState.tick++;
   
+  // Update bot AI inputs (every tick for responsiveness)
+  updateBotInputs(roomState);
+  
   // ALWAYS process direction changes (responsive input)
   for (const [_, player] of roomState.players) {
     if (!player.alive) continue;
@@ -621,6 +976,7 @@ function updateRoom(roomState) {
       // Check wall collision
       if (newHead.x < 0 || newHead.x >= MAP_WIDTH || 
           newHead.y < 0 || newHead.y >= MAP_HEIGHT) {
+        dropAllSegmentsAsFoodOrbs(player, roomState);
         player.alive = false;
         continue;
       }
@@ -677,6 +1033,7 @@ function updateRoom(roomState) {
       for (let i = 1; i < player.snake.length; i++) {
         const segment = player.snake[i];
         if (head.x === segment.x && head.y === segment.y) {
+          dropAllSegmentsAsFoodOrbs(player, roomState);
           player.alive = false;
           break;
         }
@@ -691,6 +1048,8 @@ function updateRoom(roomState) {
         // Check head-to-head collision
         const otherHead = other.snake[0];
         if (head.x === otherHead.x && head.y === otherHead.y) {
+          dropAllSegmentsAsFoodOrbs(player, roomState);
+          dropAllSegmentsAsFoodOrbs(other, roomState);
           player.alive = false;
           other.alive = false;
           break;
@@ -699,6 +1058,7 @@ function updateRoom(roomState) {
         // Check head-to-body collision
         for (const segment of other.snake) {
           if (head.x === segment.x && head.y === segment.y) {
+            dropAllSegmentsAsFoodOrbs(player, roomState);
             player.alive = false;
             break;
           }
@@ -720,11 +1080,35 @@ function updateRoom(roomState) {
           releaseWeapon(player, roomState);
         }
         
-        io.to(id).emit('death', { 
-          message: 'You died!',
-          score: player.score,
-          length: player.snake.length
-        });
+        // Only show death screen to human players, not bots
+        if (!player.isBot) {
+          io.to(id).emit('death', { 
+            message: 'You died!',
+            score: player.score,
+            length: player.snake.length
+          });
+        } else {
+          // Bots respawn immediately on next tick
+          console.log(`🤖 Bot died: ${player.name}, will respawn`);
+        }
+      }
+    }
+    
+    // Auto-respawn bots immediately (don't wait for death screen)
+    for (const botId of roomState.bots) {
+      const bot = roomState.players.get(botId);
+      if (!bot) {
+        console.error(`❌ Bot ${botId} not found in room ${roomState.id}!`);
+        continue;
+      }
+      
+      if (!bot.alive && bot.waitingToRespawn) {
+        try {
+          respawnPlayer(bot, roomState);
+          console.log(`🤖 Bot respawned: ${bot.name} (alive=${bot.alive}, snake length=${bot.snake.length})`);
+        } catch (error) {
+          console.error(`❌ Failed to respawn bot ${bot.name}:`, error);
+        }
       }
     }
     

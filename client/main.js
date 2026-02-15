@@ -1,10 +1,16 @@
 // Configuration
-const TILE_SIZE = 16;
+const BASE_TILE_SIZE = 24; // Starting zoom (bigger = more zoomed in)
+const MIN_TILE_SIZE = 12;  // Max zoom out (smaller = more zoomed out)
+const ZOOM_OUT_PER_SEGMENT = 0.3; // How much to zoom out per snake segment
 const GRID_COLOR = '#1a2840';
 const COIN_COLOR = '#ffd93d';
 const LOCAL_SNAKE_COLOR = '#4ecca3';
 const OTHER_SNAKE_COLOR = '#ee6c4d';
 const SNAKE_OUTLINE_COLOR = '#16213e';
+
+// Dynamic tile size
+let currentTileSize = BASE_TILE_SIZE;
+let targetTileSize = BASE_TILE_SIZE;
 
 // State
 let socket = null;
@@ -20,6 +26,16 @@ let gameState = {
 };
 let canvas, ctx;
 let cameraOffset = { x: 0, y: 0 };
+
+// Preloaded images (coins use same asset as logo)
+let coinImage = null;
+const COIN_IMAGE_PATH = 'assets/Krypto_snake_image.png';
+(function preloadCoinImage() {
+  const img = new Image();
+  img.onload = () => { coinImage = img; };
+  img.onerror = () => { console.warn('Coin image failed to load:', COIN_IMAGE_PATH); };
+  img.src = COIN_IMAGE_PATH;
+})();
 
 // Input buffer
 let currentDirection = 'RIGHT';
@@ -207,18 +223,18 @@ function drawEffects() {
     const alpha = 1 - age;
     
     if (effect.type === 'hit') {
-      const x = effect.x * TILE_SIZE;
-      const y = effect.y * TILE_SIZE;
+      const x = effect.x * currentTileSize;
+      const y = effect.y * currentTileSize;
       
       ctx.strokeStyle = `rgba(255, 255, 0, ${alpha})`;
       ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.arc(x + TILE_SIZE / 2, y + TILE_SIZE / 2, TILE_SIZE * (1 + age), 0, Math.PI * 2);
+      ctx.arc(x + currentTileSize / 2, y + currentTileSize / 2, currentTileSize * (1 + age), 0, Math.PI * 2);
       ctx.stroke();
     } else if (effect.type === 'explosion') {
-      const centerX = effect.x * TILE_SIZE + TILE_SIZE / 2;
-      const centerY = effect.y * TILE_SIZE + TILE_SIZE / 2;
-      const maxRadius = effect.radius * TILE_SIZE;
+      const centerX = effect.x * currentTileSize + currentTileSize / 2;
+      const centerY = effect.y * currentTileSize + currentTileSize / 2;
+      const maxRadius = effect.radius * currentTileSize;
       const radius = maxRadius * age;
       
       ctx.fillStyle = `rgba(255, 100, 0, ${alpha * 0.3})`;
@@ -293,17 +309,28 @@ function updateCamera() {
     return;
   }
   
+  // Calculate dynamic zoom based on snake length
+  const snakeLength = localPlayer.snake.length;
+  targetTileSize = Math.max(
+    MIN_TILE_SIZE,
+    BASE_TILE_SIZE - (snakeLength * ZOOM_OUT_PER_SEGMENT)
+  );
+  
+  // Smooth zoom transition
+  const zoomSpeed = 0.1;
+  currentTileSize += (targetTileSize - currentTileSize) * zoomSpeed;
+  
   const head = localPlayer.snake[0];
-  const targetX = head.x * TILE_SIZE - canvas.width / 2;
-  const targetY = head.y * TILE_SIZE - canvas.height / 2;
+  const targetX = head.x * currentTileSize - canvas.width / 2;
+  const targetY = head.y * currentTileSize - canvas.height / 2;
   
   // Smooth camera (or instant)
   cameraOffset.x = targetX;
   cameraOffset.y = targetY;
   
   // Clamp camera to map bounds
-  const maxX = gameState.mapWidth * TILE_SIZE - canvas.width;
-  const maxY = gameState.mapHeight * TILE_SIZE - canvas.height;
+  const maxX = gameState.mapWidth * currentTileSize - canvas.width;
+  const maxY = gameState.mapHeight * currentTileSize - canvas.height;
   
   cameraOffset.x = Math.max(0, Math.min(cameraOffset.x, maxX));
   cameraOffset.y = Math.max(0, Math.min(cameraOffset.y, maxY));
@@ -370,60 +397,66 @@ function drawGrid() {
   ctx.lineWidth = 1;
   
   // Calculate visible area
-  const startX = Math.floor(cameraOffset.x / TILE_SIZE);
-  const startY = Math.floor(cameraOffset.y / TILE_SIZE);
-  const endX = Math.ceil((cameraOffset.x + canvas.width) / TILE_SIZE);
-  const endY = Math.ceil((cameraOffset.y + canvas.height) / TILE_SIZE);
+  const startX = Math.floor(cameraOffset.x / currentTileSize);
+  const startY = Math.floor(cameraOffset.y / currentTileSize);
+  const endX = Math.ceil((cameraOffset.x + canvas.width) / currentTileSize);
+  const endY = Math.ceil((cameraOffset.y + canvas.height) / currentTileSize);
   
   // Draw vertical lines
   for (let x = startX; x <= endX; x++) {
     ctx.beginPath();
-    ctx.moveTo(x * TILE_SIZE, startY * TILE_SIZE);
-    ctx.lineTo(x * TILE_SIZE, endY * TILE_SIZE);
+    ctx.moveTo(x * currentTileSize, startY * currentTileSize);
+    ctx.lineTo(x * currentTileSize, endY * currentTileSize);
     ctx.stroke();
   }
   
   // Draw horizontal lines
   for (let y = startY; y <= endY; y++) {
     ctx.beginPath();
-    ctx.moveTo(startX * TILE_SIZE, y * TILE_SIZE);
-    ctx.lineTo(endX * TILE_SIZE, y * TILE_SIZE);
+    ctx.moveTo(startX * currentTileSize, y * currentTileSize);
+    ctx.lineTo(endX * currentTileSize, y * currentTileSize);
     ctx.stroke();
   }
 }
 
-// Draw coins
+// Draw coins (using coin image asset)
 function drawCoins() {
-  ctx.fillStyle = COIN_COLOR;
+  const size = currentTileSize;
+  const cx = size / 2;
   
   for (const coin of gameState.coins) {
-    const x = coin.x * TILE_SIZE;
-    const y = coin.y * TILE_SIZE;
+    const x = coin.x * size;
+    const y = coin.y * size;
     
-    // Draw coin as circle
-    ctx.beginPath();
-    ctx.arc(x + TILE_SIZE / 2, y + TILE_SIZE / 2, TILE_SIZE / 3, 0, Math.PI * 2);
-    ctx.fill();
-    
-    // Add shine effect
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-    ctx.beginPath();
-    ctx.arc(x + TILE_SIZE / 2 - 2, y + TILE_SIZE / 2 - 2, TILE_SIZE / 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = COIN_COLOR;
+    if (coinImage && coinImage.complete && coinImage.naturalWidth) {
+      const coinScale = 1.4;
+      const coinSize = size * coinScale;
+      const offset = (coinSize - size) / 2;
+      ctx.drawImage(coinImage, x - offset, y - offset, coinSize, coinSize);
+    } else {
+      // Fallback: draw circle until image loads
+      ctx.fillStyle = COIN_COLOR;
+      ctx.beginPath();
+      ctx.arc(x + cx, y + cx, size / 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.beginPath();
+      ctx.arc(x + cx - 2, y + cx - 2, size / 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 }
 
 // Draw food orbs (from cut snakes)
 function drawFoodOrbs() {
   for (const orb of gameState.foodOrbs) {
-    const x = orb.x * TILE_SIZE;
-    const y = orb.y * TILE_SIZE;
+    const x = orb.x * currentTileSize;
+    const y = orb.y * currentTileSize;
     
     // Draw orb as small circle
     ctx.fillStyle = '#ff6b6b';
     ctx.beginPath();
-    ctx.arc(x + TILE_SIZE / 2, y + TILE_SIZE / 2, TILE_SIZE / 4, 0, Math.PI * 2);
+    ctx.arc(x + currentTileSize / 2, y + currentTileSize / 2, currentTileSize / 4, 0, Math.PI * 2);
     ctx.fill();
     
     // Outline
@@ -450,26 +483,26 @@ function drawWeaponPickups() {
   for (const weapon of gameState.weapons) {
     if (!weapon.position) continue; // weapon is held by player
     
-    const x = weapon.position.x * TILE_SIZE;
-    const y = weapon.position.y * TILE_SIZE;
+    const x = weapon.position.x * currentTileSize;
+    const y = weapon.position.y * currentTileSize;
     
     // Draw background
     ctx.fillStyle = weaponColors[weapon.type] || '#888';
-    ctx.fillRect(x + 2, y + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+    ctx.fillRect(x + 2, y + 2, currentTileSize - 4, currentTileSize - 4);
     
     // Draw icon
-    ctx.font = `${TILE_SIZE - 4}px sans-serif`;
+    ctx.font = `${currentTileSize - 4}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(weaponIcons[weapon.type] || '?', x + TILE_SIZE / 2, y + TILE_SIZE / 2);
+    ctx.fillText(weaponIcons[weapon.type] || '?', x + currentTileSize / 2, y + currentTileSize / 2);
   }
 }
 
 // Draw projectiles
 function drawProjectiles() {
   for (const proj of gameState.projectiles) {
-    const x = proj.x * TILE_SIZE;
-    const y = proj.y * TILE_SIZE;
+    const x = proj.x * currentTileSize;
+    const y = proj.y * currentTileSize;
     
     if (proj.type === 'BULLET') {
       // Small yellow dot
@@ -504,39 +537,39 @@ function drawSnakes() {
     // Draw each segment
     for (let i = 0; i < player.snake.length; i++) {
       const segment = player.snake[i];
-      const x = segment.x * TILE_SIZE;
-      const y = segment.y * TILE_SIZE;
+      const x = segment.x * currentTileSize;
+      const y = segment.y * currentTileSize;
       
       // Outline
       ctx.fillStyle = SNAKE_OUTLINE_COLOR;
-      ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+      ctx.fillRect(x, y, currentTileSize, currentTileSize);
       
       // Body
       const isHead = i === 0;
       if (isHead) {
         // Draw head brighter
         ctx.fillStyle = snakeColor;
-        ctx.fillRect(x + 1, y + 1, TILE_SIZE - 2, TILE_SIZE - 2);
+        ctx.fillRect(x + 1, y + 1, currentTileSize - 2, currentTileSize - 2);
         
-        // Draw eyes
+        // Draw eyes (scale with tile size)
         ctx.fillStyle = '#16213e';
-        const eyeSize = 3;
-        const eyeOffset = 4;
+        const eyeSize = Math.max(2, currentTileSize / 6);
+        const eyeOffset = Math.max(3, currentTileSize / 4);
         ctx.fillRect(x + eyeOffset, y + eyeOffset, eyeSize, eyeSize);
-        ctx.fillRect(x + TILE_SIZE - eyeOffset - eyeSize, y + eyeOffset, eyeSize, eyeSize);
+        ctx.fillRect(x + currentTileSize - eyeOffset - eyeSize, y + eyeOffset, eyeSize, eyeSize);
       } else {
         // Draw body slightly darker
         ctx.fillStyle = adjustBrightness(snakeColor, -10);
-        ctx.fillRect(x + 2, y + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+        ctx.fillRect(x + 2, y + 2, currentTileSize - 4, currentTileSize - 4);
       }
     }
     
-    // Draw name above head
+    // Draw name above head (scale font with tile size)
     const head = player.snake[0];
     ctx.fillStyle = snakeColor;
-    ctx.font = 'bold 12px sans-serif';
+    ctx.font = `bold ${Math.max(10, currentTileSize * 0.75)}px sans-serif`;
     ctx.textAlign = 'center';
-    ctx.fillText(player.name, head.x * TILE_SIZE + TILE_SIZE / 2, head.y * TILE_SIZE - 5);
+    ctx.fillText(player.name, head.x * currentTileSize + currentTileSize / 2, head.y * currentTileSize - 5);
   }
 }
 
@@ -556,7 +589,7 @@ function drawScoreboard() {
     const weaponIcon = player.weapon ? weaponIcons[player.weapon] : '';
     html += `<div class="${className}">
       <span class="name">${player.name} ${weaponIcon}</span>
-      <span class="score">⚡${player.score} (${length})</span>
+      <span class="score">${length}</span>
     </div>`;
   }
   
