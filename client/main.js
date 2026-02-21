@@ -1,8 +1,11 @@
 // Configuration
 const BASE_TILE_SIZE = 24; // Starting zoom (bigger = more zoomed in)
-const MIN_TILE_SIZE = 12;  // Max zoom out (smaller = more zoomed out)
-const ZOOM_OUT_PER_SEGMENT = 0.3; // How much to zoom out per snake segment
-const GRID_COLOR = '#1a2840';
+const MIN_TILE_SIZE = 18;  // Max zoom out (higher = stays more zoomed in)
+const ZOOM_OUT_PER_SEGMENT = 0.12; // How much to zoom out per snake segment (smaller = zoom stays in longer)
+const GRID_TILE_A = '#0f3460';   // alternating grid square (no lines)
+const GRID_TILE_B = '#1a2840';
+const BORDER_WIDTH = 2;          // tiles; black border around playable area
+const BORDER_COLOR = '#000000';
 const COIN_COLOR = '#ffd93d';
 const LOCAL_SNAKE_COLOR = '#4ecca3';
 const OTHER_SNAKE_COLOR = '#ee6c4d';
@@ -56,6 +59,10 @@ const deathScore = document.getElementById('deathScore');
 const deathLength = document.getElementById('deathLength');
 const respawnBtn = document.getElementById('respawnBtn');
 const quitBtn = document.getElementById('quitBtn');
+const infoBtn = document.getElementById('infoBtn');
+const rulesModal = document.getElementById('rulesModal');
+const rulesBackdrop = document.getElementById('rulesBackdrop');
+const rulesCloseBtn = document.getElementById('rulesCloseBtn');
 
 // Initialize canvas
 function initCanvas() {
@@ -109,6 +116,9 @@ function connect() {
     // Start input handling
     setupInput();
     
+    // Focus canvas so arrow keys work immediately (and after clicking back to tab)
+    canvas.focus();
+    
     // Start render loop
     requestAnimationFrame(render);
   });
@@ -129,6 +139,8 @@ function connect() {
   socket.on('respawned', (data) => {
     console.log('Player respawned');
     hideDeathScreen();
+    // Put focus back on canvas so arrow keys work (Respawn button had focus)
+    canvas.focus();
   });
   
   socket.on('weaponHit', (data) => {
@@ -288,6 +300,11 @@ function setupInput() {
     }
   });
   
+  // When user clicks on canvas, give it focus so arrow keys work (e.g. after clicking back to tab)
+  canvas.addEventListener('click', () => {
+    canvas.focus();
+  });
+
   // Mouse click for weapon action
   canvas.addEventListener('click', () => {
     const localPlayer = getLocalPlayer();
@@ -391,31 +408,23 @@ function render() {
   requestAnimationFrame(render);
 }
 
-// Draw grid
+// Draw grid: 2-tile black border, then checkerboard playable area (no lines between)
 function drawGrid() {
-  ctx.strokeStyle = GRID_COLOR;
-  ctx.lineWidth = 1;
-  
-  // Calculate visible area
   const startX = Math.floor(cameraOffset.x / currentTileSize);
   const startY = Math.floor(cameraOffset.y / currentTileSize);
   const endX = Math.ceil((cameraOffset.x + canvas.width) / currentTileSize);
   const endY = Math.ceil((cameraOffset.y + canvas.height) / currentTileSize);
-  
-  // Draw vertical lines
-  for (let x = startX; x <= endX; x++) {
-    ctx.beginPath();
-    ctx.moveTo(x * currentTileSize, startY * currentTileSize);
-    ctx.lineTo(x * currentTileSize, endY * currentTileSize);
-    ctx.stroke();
-  }
-  
-  // Draw horizontal lines
-  for (let y = startY; y <= endY; y++) {
-    ctx.beginPath();
-    ctx.moveTo(startX * currentTileSize, y * currentTileSize);
-    ctx.lineTo(endX * currentTileSize, y * currentTileSize);
-    ctx.stroke();
+  const ts = currentTileSize;
+  const mw = gameState.mapWidth;
+  const mh = gameState.mapHeight;
+
+  for (let gy = startY; gy <= endY; gy++) {
+    for (let gx = startX; gx <= endX; gx++) {
+      const inBorder = gx < BORDER_WIDTH || gx >= mw - BORDER_WIDTH ||
+                       gy < BORDER_WIDTH || gy >= mh - BORDER_WIDTH;
+      ctx.fillStyle = inBorder ? BORDER_COLOR : ((gx + gy) % 2 === 0 ? GRID_TILE_A : GRID_TILE_B);
+      ctx.fillRect(gx * ts, gy * ts, ts, ts);
+    }
   }
 }
 
@@ -526,57 +535,93 @@ function drawProjectiles() {
   }
 }
 
-// Draw snakes
+// Draw snakes: round head and tail, straight connected body in between
 function drawSnakes() {
+  const ts = currentTileSize;
+  const half = ts / 2;
+
   for (const player of gameState.players) {
     const isLocal = player.id === localPlayerId;
-    const snakeColor = isLocal ? LOCAL_SNAKE_COLOR : OTHER_SNAKE_COLOR;
-    
+    const snakeColor = player.color || (isLocal ? LOCAL_SNAKE_COLOR : OTHER_SNAKE_COLOR);
+
     if (!player.snake || player.snake.length === 0) continue;
-    
-    // Draw each segment
-    for (let i = 0; i < player.snake.length; i++) {
-      const segment = player.snake[i];
-      const x = segment.x * currentTileSize;
-      const y = segment.y * currentTileSize;
-      
-      // Outline
-      ctx.fillStyle = SNAKE_OUTLINE_COLOR;
-      ctx.fillRect(x, y, currentTileSize, currentTileSize);
-      
-      // Body
-      const isHead = i === 0;
-      if (isHead) {
-        // Draw head brighter
-        ctx.fillStyle = snakeColor;
-        ctx.fillRect(x + 1, y + 1, currentTileSize - 2, currentTileSize - 2);
-        
-        // Draw eyes (scale with tile size)
-        ctx.fillStyle = '#16213e';
-        const eyeSize = Math.max(2, currentTileSize / 6);
-        const eyeOffset = Math.max(3, currentTileSize / 4);
-        ctx.fillRect(x + eyeOffset, y + eyeOffset, eyeSize, eyeSize);
-        ctx.fillRect(x + currentTileSize - eyeOffset - eyeSize, y + eyeOffset, eyeSize, eyeSize);
-      } else {
-        // Draw body slightly darker
-        ctx.fillStyle = adjustBrightness(snakeColor, -10);
-        ctx.fillRect(x + 2, y + 2, currentTileSize - 4, currentTileSize - 4);
+
+    const segs = player.snake;
+    if (segs.length === 1) {
+      // Single segment: just a circle
+      const cx = segs[0].x * ts + half;
+      const cy = segs[0].y * ts + half;
+      ctx.fillStyle = snakeColor;
+      ctx.beginPath();
+      ctx.arc(cx, cy, half - 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      // Path through segment centers: round caps = round head & tail, straight middle
+      const path = segs.map(s => ({ x: s.x * ts + half, y: s.y * ts + half }));
+      ctx.strokeStyle = adjustBrightness(snakeColor, -10);
+      ctx.lineWidth = ts - 1;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(path[0].x, path[0].y);
+      for (let i = 1; i < path.length; i++) {
+        ctx.lineTo(path[i].x, path[i].y);
       }
+      ctx.stroke();
+
+      // Round head circle on top (so head is clearly round)
+      ctx.fillStyle = snakeColor;
+      ctx.beginPath();
+      ctx.arc(path[0].x, path[0].y, half - 0.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Round tail circle
+      ctx.fillStyle = adjustBrightness(snakeColor, -10);
+      ctx.beginPath();
+      ctx.arc(path[path.length - 1].x, path[path.length - 1].y, half - 0.5, 0, Math.PI * 2);
+      ctx.fill();
     }
-    
-    // Draw name above head (scale font with tile size)
-    const head = player.snake[0];
+
+    // Eyes on head
+    const head = segs[0];
+    const cx = head.x * ts + half;
+    const cy = head.y * ts + half;
+    const eyeRadius = Math.max(2, ts / 6);
+    const pupilRadius = Math.max(1, ts / 12);
+    const eyeOffsetX = Math.max(3, ts / 4);
+    const eyeOffsetY = -Math.max(2, ts / 5);
+    ctx.fillStyle = adjustBrightness(snakeColor, 40);
+    ctx.beginPath();
+    ctx.arc(cx - eyeOffsetX, cy + eyeOffsetY, eyeRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = SNAKE_OUTLINE_COLOR;
+    ctx.beginPath();
+    ctx.arc(cx - eyeOffsetX, cy + eyeOffsetY, pupilRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = adjustBrightness(snakeColor, 40);
+    ctx.beginPath();
+    ctx.arc(cx + eyeOffsetX, cy + eyeOffsetY, eyeRadius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = SNAKE_OUTLINE_COLOR;
+    ctx.beginPath();
+    ctx.arc(cx + eyeOffsetX, cy + eyeOffsetY, pupilRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Name above head (positioned well above the head so it's visible)
+    const nameOffsetY = half + Math.max(14, ts * 0.85);
     ctx.fillStyle = snakeColor;
-    ctx.font = `bold ${Math.max(10, currentTileSize * 0.75)}px sans-serif`;
+    ctx.font = `bold ${Math.max(10, ts * 0.75)}px sans-serif`;
     ctx.textAlign = 'center';
-    ctx.fillText(player.name, head.x * currentTileSize + currentTileSize / 2, head.y * currentTileSize - 5);
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(player.name, cx, cy - nameOffsetY);
+    ctx.textBaseline = 'alphabetic';
   }
 }
 
 // Draw scoreboard
 function drawScoreboard() {
-  // Sort players by score
-  const sortedPlayers = [...gameState.players].sort((a, b) => b.score - a.score);
+  // Sort players by score (highest first / most points on top)
+  const sortedPlayers = [...gameState.players].sort((a, b) => (b.score || 0) - (a.score || 0));
   
   // Build scoreboard HTML
   let html = '';
@@ -587,13 +632,20 @@ function drawScoreboard() {
     const className = isLocal ? 'score-item local' : 'score-item';
     const length = player.snake ? player.snake.length : 0;
     const weaponIcon = player.weapon ? weaponIcons[player.weapon] : '';
+    const nameColor = player.color || (isLocal ? '#4ecca3' : '#ccc');
     html += `<div class="${className}">
-      <span class="name">${player.name} ${weaponIcon}</span>
+      <span class="name" style="color:${nameColor}">${escapeHtml(player.name)} ${weaponIcon}</span>
       <span class="score">${length}</span>
     </div>`;
   }
   
   scoreList.innerHTML = html;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
 }
 
 // Draw weapon UI
@@ -685,6 +737,27 @@ respawnBtn.addEventListener('click', () => {
 quitBtn.addEventListener('click', () => {
   returnToMenu('You left the game');
 });
+
+if (infoBtn) {
+  infoBtn.addEventListener('click', () => {
+    if (rulesModal) {
+      rulesModal.classList.remove('hidden');
+      rulesModal.setAttribute('aria-hidden', 'false');
+    }
+  });
+}
+if (rulesBackdrop) {
+  rulesBackdrop.addEventListener('click', closeRulesModal);
+}
+if (rulesCloseBtn) {
+  rulesCloseBtn.addEventListener('click', closeRulesModal);
+}
+function closeRulesModal() {
+  if (rulesModal) {
+    rulesModal.classList.add('hidden');
+    rulesModal.setAttribute('aria-hidden', 'true');
+  }
+}
 
 // Initialize
 initCanvas();

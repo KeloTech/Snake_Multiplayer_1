@@ -23,14 +23,32 @@
       
       <div id="status" class="status"></div>
       
-      <div class="instructions">
-        <h3>How to Play</h3>
-        <ul>
-          <li>Use <strong>Arrow Keys</strong> or <strong>WASD</strong> to move</li>
-          <li>Eat coins to grow your snake</li>
-          <li>Avoid walls and other snakes</li>
-          <li>Camera follows your snake</li>
-        </ul>
+      <div class="controls-row">
+        <div class="control-item">
+          <span class="key-icons" aria-label="Arrow keys">↑ ↓ ← →</span>
+          <span class="control-label">Movement</span>
+        </div>
+        <div class="control-item">
+          <span class="key-key">Space</span>
+          <span class="control-label">Weapon / Powerup</span>
+        </div>
+        <button type="button" id="infoBtn" class="info-btn" title="More info">i</button>
+      </div>
+      
+      <div id="rulesModal" class="rules-modal hidden" aria-hidden="true">
+        <div class="rules-backdrop" id="rulesBackdrop"></div>
+        <div class="rules-content">
+          <h3>Rules</h3>
+          <p>Eat coins to grow. Avoid walls and other snakes. Don’t hit yourself. Camera follows your snake.</p>
+          <h4>Weapons</h4>
+          <ul>
+            <li><strong>Sword</strong> — Melee: cut nearby snakes (SPACE / click).</li>
+            <li><strong>Gun</strong> — Shoots in facing direction, limited ammo.</li>
+            <li><strong>Rocket</strong> — Explodes on impact, damages in an area, limited ammo.</li>
+          </ul>
+          <p class="rules-hint">Pick up weapons from the map; drop when you die.</p>
+          <button type="button" id="rulesCloseBtn" class="rules-close">Close</button>
+        </div>
       </div>
       
       <div class="server-config">
@@ -41,8 +59,8 @@
     </div>
   </div>
   
-  <!-- Game Canvas -->
-  <canvas id="gameCanvas"></canvas>
+  <!-- Game Canvas (focusable so arrow keys work after respawn / clicking back) -->
+  <canvas id="gameCanvas" tabindex="0"></canvas>
   
   <!-- Scoreboard -->
   <div id="scoreboard" class="scoreboard hidden">

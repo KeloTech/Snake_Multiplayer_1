@@ -8,6 +8,7 @@ const MOVE_EVERY_N_TICKS = 2; // Snake moves every 2 ticks = 12 moves/sec (same 
 const SNAPSHOT_EVERY_N_TICKS = 2; // Broadcast snapshots every 2 ticks = 12 snapshots/sec
 const MAP_WIDTH = 120;
 const MAP_HEIGHT = 120;
+const BORDER_WIDTH = 2; // tiles; playable area is inset by this on each side
 const MAX_PLAYERS_PER_ROOM = 15;
 const COIN_TARGET = 30;
 const MIN_SPAWN_DISTANCE = 15;
@@ -61,6 +62,24 @@ const rooms = new Map(); // roomId -> RoomState
 const socketToRoom = new Map(); // socketId -> roomId
 let nextRoomNumber = 1;
 let nextBotId = 1;
+
+// 10 pastel colors (assigned on join/respawn)
+const PASTEL_COLORS = [
+  '#FFB6C1', // pastel pink
+  '#98FF98', // pastel mint
+  '#E6E6FA', // lavender
+  '#FFDAB9', // peach
+  '#ADD8E6', // pastel blue
+  '#FFF9C4', // pastel yellow
+  '#F7CAC9', // pastel coral
+  '#C5E1A5', // pastel green
+  '#E1BEE7', // pastel lilac
+  '#B3E5FC'  // pastel sky
+];
+
+function randomPastelColor() {
+  return PASTEL_COLORS[Math.floor(Math.random() * PASTEL_COLORS.length)];
+}
 
 // Bot names for variety
 const BOT_NAMES = [
@@ -133,7 +152,8 @@ function createPlayer(socketId, name, spawnPos, isBot = false) {
     weaponCooldown: 0,
     ammo: 0, // Current ammo for equipped weapon
     isBot: isBot,
-    botPersonality: isBot ? new BotPersonality() : null
+    botPersonality: isBot ? new BotPersonality() : null,
+    color: randomPastelColor()
   };
 }
 
@@ -143,11 +163,16 @@ function sanitizeName(name) {
   return name.trim().slice(0, 20).replace(/[<>]/g, '') || 'Player';
 }
 
-// Random position
+// Playable bounds (inside 2-tile border)
+const PLAYABLE_MIN = BORDER_WIDTH;
+const PLAYABLE_MAX_X = MAP_WIDTH - 1 - BORDER_WIDTH;
+const PLAYABLE_MAX_Y = MAP_HEIGHT - 1 - BORDER_WIDTH;
+
+// Random position (playable area only, not in border)
 function randomPos() {
   return {
-    x: Math.floor(Math.random() * MAP_WIDTH),
-    y: Math.floor(Math.random() * MAP_HEIGHT)
+    x: PLAYABLE_MIN + Math.floor(Math.random() * (MAP_WIDTH - 2 * BORDER_WIDTH)),
+    y: PLAYABLE_MIN + Math.floor(Math.random() * (MAP_HEIGHT - 2 * BORDER_WIDTH))
   };
 }
 
@@ -170,12 +195,14 @@ function distance(p1, p2) {
   return Math.abs(p1.x - p2.x) + Math.abs(p1.y - p2.y);
 }
 
-// Find valid spawn position
+// Find valid spawn position (must leave room for initial tail to the left)
 function findSpawnPosition(roomState, attempts = 100) {
   let minDist = MIN_SPAWN_DISTANCE;
-  
+  const minSpawnX = PLAYABLE_MIN + INITIAL_SNAKE_LENGTH - 1; // tail extends left
+
   for (let i = 0; i < attempts; i++) {
     const pos = randomPos();
+    if (pos.x < minSpawnX) continue; // ensure tail doesn't spawn in border
     
     // Check if occupied
     if (isPositionOccupied(pos, roomState)) continue;
@@ -202,11 +229,13 @@ function findSpawnPosition(roomState, attempts = 100) {
   // Fallback: return any non-occupied position
   for (let i = 0; i < 100; i++) {
     const pos = randomPos();
-    if (!isPositionOccupied(pos, roomState)) return pos;
+    if (pos.x >= minSpawnX && !isPositionOccupied(pos, roomState)) return pos;
   }
-  
-  // Last resort
-  return randomPos();
+
+  // Last resort (ensure valid x for tail)
+  const p = randomPos();
+  p.x = Math.max(minSpawnX, p.x);
+  return p;
 }
 
 // Spawn initial snake at position
@@ -282,7 +311,8 @@ function respawnPlayer(player, roomState) {
   player.nextDir = 'RIGHT';
   player.alive = true;
   player.waitingToRespawn = false;
-  
+  player.color = randomPastelColor(); // New pastel color on respawn
+
   // Release weapon if player had one
   if (player.weapon) {
     releaseWeapon(player, roomState);
@@ -312,7 +342,7 @@ function spawnBots(roomState) {
 
 // Check if position is safe (no collision) - generic, optionally ignore one player entirely
 function isSafe(x, y, roomState, ignoreBotId = null) {
-  if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) return false;
+  if (x < PLAYABLE_MIN || x > PLAYABLE_MAX_X || y < PLAYABLE_MIN || y > PLAYABLE_MAX_Y) return false;
   
   for (const [id, player] of roomState.players) {
     if (id === ignoreBotId) continue;
@@ -326,7 +356,7 @@ function isSafe(x, y, roomState, ignoreBotId = null) {
 
 // Safe for a specific player to MOVE to (x,y). Treats that player's tail as vacated (tail moves).
 function isSafeForMove(movingPlayer, x, y, roomState) {
-  if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) return false;
+  if (x < PLAYABLE_MIN || x > PLAYABLE_MAX_X || y < PLAYABLE_MIN || y > PLAYABLE_MAX_Y) return false;
   
   for (const [id, player] of roomState.players) {
     if (!player.alive) continue;
@@ -649,12 +679,14 @@ function cutSnake(player, cutIndex, roomState) {
   const removedSegments = player.snake.slice(cutIndex + 1);
   player.snake = player.snake.slice(0, cutIndex + 1);
   
-  // Convert removed segments to food orbs
+  // Convert removed segments to food orbs (expire after 1 min if not picked up)
+  const droppedAt = Date.now();
   removedSegments.forEach(segment => {
     roomState.foodOrbs.push({
       x: segment.x,
       y: segment.y,
-      value: 1
+      value: 1,
+      droppedAt
     });
   });
   
@@ -668,13 +700,15 @@ function cutSnake(player, cutIndex, roomState) {
 function dropAllSegmentsAsFoodOrbs(player, roomState) {
   if (!player.snake || player.snake.length === 0) return;
   
-  // Convert all segments to food orbs (skip head to avoid clutter at death position)
+  // Convert all segments to food orbs (skip head); expire after 1 min if not picked up
+  const droppedAt = Date.now();
   for (let i = 1; i < player.snake.length; i++) {
     const segment = player.snake[i];
     roomState.foodOrbs.push({
       x: segment.x,
       y: segment.y,
-      value: 1
+      value: 1,
+      droppedAt
     });
   }
   
@@ -940,10 +974,19 @@ function removePlayerFromRoom(socketId, roomId) {
   }
 }
 
+const FOOD_ORB_LIFETIME_MS = 60 * 1000; // 1 minute
+
 // Update single room (game logic)
 function updateRoom(roomState) {
   roomState.tick++;
-  
+
+  // Remove dropped points that weren't picked up within 1 minute
+  const now = Date.now();
+  roomState.foodOrbs = roomState.foodOrbs.filter(orb => {
+    if (orb.droppedAt == null) return true; // legacy orbs without timestamp stay
+    return now - orb.droppedAt < FOOD_ORB_LIFETIME_MS;
+  });
+
   // Update bot AI inputs (every tick for responsiveness)
   updateBotInputs(roomState);
   
@@ -973,9 +1016,9 @@ function updateRoom(roomState) {
         y: head.y + dir.y
       };
       
-      // Check wall collision
-      if (newHead.x < 0 || newHead.x >= MAP_WIDTH || 
-          newHead.y < 0 || newHead.y >= MAP_HEIGHT) {
+      // Check wall collision (2-tile border is out of bounds)
+      if (newHead.x < PLAYABLE_MIN || newHead.x > PLAYABLE_MAX_X ||
+          newHead.y < PLAYABLE_MIN || newHead.y > PLAYABLE_MAX_Y) {
         dropAllSegmentsAsFoodOrbs(player, roomState);
         player.alive = false;
         continue;
@@ -1129,7 +1172,8 @@ function broadcastRoom(roomState, roomId) {
         snake: p.snake,
         score: p.score,
         weapon: p.weapon,
-        ammo: p.ammo
+        ammo: p.ammo,
+        color: p.color
       })),
     coins: roomState.coins,
     foodOrbs: roomState.foodOrbs,
