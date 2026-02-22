@@ -2,14 +2,14 @@
 const BASE_TILE_SIZE = 24; // Starting zoom (bigger = more zoomed in)
 const MIN_TILE_SIZE = 18;  // Max zoom out (higher = stays more zoomed in)
 const ZOOM_OUT_PER_SEGMENT = 0.12; // How much to zoom out per snake segment (smaller = zoom stays in longer)
-const GRID_TILE_A = '#0f3460';   // alternating grid square (no lines)
-const GRID_TILE_B = '#1a2840';
-const BORDER_WIDTH = 2;          // tiles; black border around playable area
-const BORDER_COLOR = '#000000';
-const COIN_COLOR = '#ffd93d';
-const LOCAL_SNAKE_COLOR = '#4ecca3';
-const OTHER_SNAKE_COLOR = '#ee6c4d';
-const SNAKE_OUTLINE_COLOR = '#16213e';
+const GRID_TILE_A = '#c5d0e8';   // pastel blue
+const GRID_TILE_B = '#b8c5e0';
+const BORDER_WIDTH = 2;
+const BORDER_COLOR = '#8b9dc3';
+const COIN_COLOR = '#d4b843';    // richer gold so points stand out
+const LOCAL_SNAKE_COLOR = '#2db896';   // saturated teal – visible on floor
+const OTHER_SNAKE_COLOR = '#e07a6b';   // saturated coral – visible on floor
+const SNAKE_OUTLINE_COLOR = '#1e3d4a'; // dark outline so snake pops
 
 // Dynamic tile size
 let currentTileSize = BASE_TILE_SIZE;
@@ -45,6 +45,8 @@ let currentDirection = 'RIGHT';
 let inputQueue = [];
 
 // DOM Elements
+const startScreen = document.getElementById('startScreen');
+const playBtn = document.getElementById('playBtn');
 const menu = document.getElementById('menu');
 const joinBtn = document.getElementById('joinBtn');
 const nicknameInput = document.getElementById('nickname');
@@ -63,6 +65,12 @@ const infoBtn = document.getElementById('infoBtn');
 const rulesModal = document.getElementById('rulesModal');
 const rulesBackdrop = document.getElementById('rulesBackdrop');
 const rulesCloseBtn = document.getElementById('rulesCloseBtn');
+const serverConfig = document.getElementById('serverConfig');
+const serverConfigToggle = document.getElementById('serverConfigToggle');
+const gameMusic = document.getElementById('gameMusic');
+const soundToggle = document.getElementById('soundToggle');
+
+let musicMuted = false;
 
 // Initialize canvas
 function initCanvas() {
@@ -81,7 +89,7 @@ function resizeCanvas() {
 
 // Connect to server
 function connect() {
-  const serverUrl = serverUrlInput.value.trim() || 'ws://localhost:3001';
+  const serverUrl = serverUrlInput.value.trim() || 'https://snake-multiplayer-1.onrender.com/';
 
   
   statusDiv.textContent = 'Connecting...';
@@ -112,6 +120,11 @@ function connect() {
     menu.classList.add('hidden');
     scoreboard.classList.remove('hidden');
     backToMenuBtn.classList.remove('hidden');
+    
+    if (!musicMuted && gameMusic) {
+      gameMusic.volume = 0.5;
+      gameMusic.play().catch(() => {});
+    }
     
     // Start input handling
     setupInput();
@@ -179,6 +192,10 @@ function returnToMenu(message) {
   scoreboard.classList.add('hidden');
   backToMenuBtn.classList.add('hidden');
   deathScreen.classList.add('hidden');
+  if (gameMusic) {
+    gameMusic.pause();
+    gameMusic.currentTime = 0;
+  }
   statusDiv.textContent = message || '';
   statusDiv.className = message ? 'status error' : 'status';
   joinBtn.disabled = false;
@@ -238,7 +255,7 @@ function drawEffects() {
       const x = effect.x * currentTileSize;
       const y = effect.y * currentTileSize;
       
-      ctx.strokeStyle = `rgba(255, 255, 0, ${alpha})`;
+      ctx.strokeStyle = `rgba(245, 230, 163, ${alpha})`;
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.arc(x + currentTileSize / 2, y + currentTileSize / 2, currentTileSize * (1 + age), 0, Math.PI * 2);
@@ -249,12 +266,12 @@ function drawEffects() {
       const maxRadius = effect.radius * currentTileSize;
       const radius = maxRadius * age;
       
-      ctx.fillStyle = `rgba(255, 100, 0, ${alpha * 0.3})`;
+      ctx.fillStyle = `rgba(240, 168, 154, ${alpha * 0.4})`;
       ctx.beginPath();
       ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
       ctx.fill();
       
-      ctx.strokeStyle = `rgba(255, 50, 0, ${alpha})`;
+      ctx.strokeStyle = `rgba(240, 140, 130, ${alpha})`;
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
@@ -364,8 +381,8 @@ function render() {
   const isDead = !localPlayer || !localPlayer.snake || localPlayer.snake.length === 0;
   
   if (!isDead) {
-    // Clear canvas
-    ctx.fillStyle = '#0f3460';
+    // Clear canvas (pastel)
+    ctx.fillStyle = '#c5d0e8';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     
     // Update camera
@@ -408,7 +425,7 @@ function render() {
   requestAnimationFrame(render);
 }
 
-// Draw grid: 2-tile black border, then checkerboard playable area (no lines between)
+// Draw grid: 2-tile border, then playable area with 3x3 same-color blocks (reduces flicker when moving)
 function drawGrid() {
   const startX = Math.floor(cameraOffset.x / currentTileSize);
   const startY = Math.floor(cameraOffset.y / currentTileSize);
@@ -417,12 +434,15 @@ function drawGrid() {
   const ts = currentTileSize;
   const mw = gameState.mapWidth;
   const mh = gameState.mapHeight;
+  const BLOCK = 3; // 3x3 tile blocks share one color
 
   for (let gy = startY; gy <= endY; gy++) {
     for (let gx = startX; gx <= endX; gx++) {
       const inBorder = gx < BORDER_WIDTH || gx >= mw - BORDER_WIDTH ||
                        gy < BORDER_WIDTH || gy >= mh - BORDER_WIDTH;
-      ctx.fillStyle = inBorder ? BORDER_COLOR : ((gx + gy) % 2 === 0 ? GRID_TILE_A : GRID_TILE_B);
+      const bx = Math.floor(gx / BLOCK);
+      const by = Math.floor(gy / BLOCK);
+      ctx.fillStyle = inBorder ? BORDER_COLOR : ((bx + by) % 2 === 0 ? GRID_TILE_A : GRID_TILE_B);
       ctx.fillRect(gx * ts, gy * ts, ts, ts);
     }
   }
@@ -436,6 +456,8 @@ function drawCoins() {
   for (const coin of gameState.coins) {
     const x = coin.x * size;
     const y = coin.y * size;
+    const centerX = x + cx;
+    const centerY = y + cx;
     
     if (coinImage && coinImage.complete && coinImage.naturalWidth) {
       const coinScale = 1.4;
@@ -443,34 +465,32 @@ function drawCoins() {
       const offset = (coinSize - size) / 2;
       ctx.drawImage(coinImage, x - offset, y - offset, coinSize, coinSize);
     } else {
-      // Fallback: draw circle until image loads
+      const r = size / 3;
       ctx.fillStyle = COIN_COLOR;
       ctx.beginPath();
-      ctx.arc(x + cx, y + cx, size / 3, 0, Math.PI * 2);
+      ctx.arc(centerX, centerY, r, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
       ctx.beginPath();
-      ctx.arc(x + cx - 2, y + cx - 2, size / 6, 0, Math.PI * 2);
+      ctx.arc(centerX - 2, centerY - 2, size / 6, 0, Math.PI * 2);
       ctx.fill();
     }
   }
 }
 
-// Draw food orbs (from cut snakes)
+// Draw food orbs (from cut snakes) – visible on floor
 function drawFoodOrbs() {
   for (const orb of gameState.foodOrbs) {
     const x = orb.x * currentTileSize;
     const y = orb.y * currentTileSize;
-    
-    // Draw orb as small circle
-    ctx.fillStyle = '#ff6b6b';
+    const cx = x + currentTileSize / 2;
+    const cy = y + currentTileSize / 2;
+    ctx.strokeStyle = 'rgba(50, 35, 40, 0.8)';
+    ctx.lineWidth = 1.5;
+    ctx.fillStyle = '#e07a6b';
     ctx.beginPath();
-    ctx.arc(x + currentTileSize / 2, y + currentTileSize / 2, currentTileSize / 4, 0, Math.PI * 2);
+    ctx.arc(cx, cy, currentTileSize / 4, 0, Math.PI * 2);
     ctx.fill();
-    
-    // Outline
-    ctx.strokeStyle = '#ff5252';
-    ctx.lineWidth = 1;
     ctx.stroke();
   }
 }
@@ -478,9 +498,9 @@ function drawFoodOrbs() {
 // Draw weapon pickups
 function drawWeaponPickups() {
   const weaponColors = {
-    SWORD: '#c0c0c0',
-    GUN: '#4a90e2',
-    ROCKET: '#e74c3c'
+    SWORD: '#e0ddd8',
+    GUN: '#a8c5e8',
+    ROCKET: '#f0a89a'
   };
   
   const weaponIcons = {
@@ -496,7 +516,7 @@ function drawWeaponPickups() {
     const y = weapon.position.y * currentTileSize;
     
     // Draw background
-    ctx.fillStyle = weaponColors[weapon.type] || '#888';
+    ctx.fillStyle = weaponColors[weapon.type] || '#c4b5c8';
     ctx.fillRect(x + 2, y + 2, currentTileSize - 4, currentTileSize - 4);
     
     // Draw icon
@@ -514,20 +534,17 @@ function drawProjectiles() {
     const y = proj.y * currentTileSize;
     
     if (proj.type === 'BULLET') {
-      // Small yellow dot
-      ctx.fillStyle = '#ffeb3b';
+      ctx.fillStyle = '#f5e6a3';
       ctx.beginPath();
       ctx.arc(x, y, 3, 0, Math.PI * 2);
       ctx.fill();
     } else if (proj.type === 'ROCKET') {
-      // Larger red projectile
-      ctx.fillStyle = '#e74c3c';
+      ctx.fillStyle = '#f0a89a';
       ctx.beginPath();
       ctx.arc(x, y, 6, 0, Math.PI * 2);
       ctx.fill();
       
-      // Trail effect
-      ctx.fillStyle = 'rgba(231, 76, 60, 0.3)';
+      ctx.fillStyle = 'rgba(240, 168, 154, 0.4)';
       ctx.beginPath();
       ctx.arc(x - proj.vx * 2, y - proj.vy * 2, 4, 0, Math.PI * 2);
       ctx.fill();
@@ -535,7 +552,23 @@ function drawProjectiles() {
   }
 }
 
-// Draw snakes: round head and tail, straight connected body in between
+// Get head facing direction from segment positions (in pixel space, normalized)
+function getHeadDirection(segs, ts) {
+  const half = ts / 2;
+  if (segs.length < 2) return { dx: 1, dy: 0 };
+  const hx = segs[0].x * ts + half;
+  const hy = segs[0].y * ts + half;
+  const nx = segs[1].x * ts + half;
+  const ny = segs[1].y * ts + half;
+  let dx = hx - nx;
+  let dy = hy - ny;
+  const len = Math.hypot(dx, dy) || 1;
+  dx /= len;
+  dy /= len;
+  return { dx, dy };
+}
+
+// Draw snakes: detailed body, glow, cute face (eyes, smile, blush)
 function drawSnakes() {
   const ts = currentTileSize;
   const half = ts / 2;
@@ -543,76 +576,199 @@ function drawSnakes() {
   for (const player of gameState.players) {
     const isLocal = player.id === localPlayerId;
     const snakeColor = player.color || (isLocal ? LOCAL_SNAKE_COLOR : OTHER_SNAKE_COLOR);
+    const bodyDark = adjustBrightness(snakeColor, -18);
+    const bodyLight = adjustBrightness(snakeColor, 25);
 
     if (!player.snake || player.snake.length === 0) continue;
 
     const segs = player.snake;
+    const path = segs.map(s => ({ x: s.x * ts + half, y: s.y * ts + half }));
+
     if (segs.length === 1) {
-      // Single segment: just a circle
-      const cx = segs[0].x * ts + half;
-      const cy = segs[0].y * ts + half;
-      ctx.fillStyle = snakeColor;
+      // Single segment: head only – oval with soft gradient, no harsh circle
+      const cx = path[0].x;
+      const cy = path[0].y;
+      const r = half - 0.5;
+      ctx.fillStyle = `rgba(255,255,255,0.12)`;
       ctx.beginPath();
-      ctx.arc(cx, cy, half - 0.5, 0, Math.PI * 2);
+      ctx.ellipse(cx, cy, r * 1.08, r * 0.92, 0, 0, Math.PI * 2);
       ctx.fill();
+      const grad = ctx.createRadialGradient(cx - r * 0.3, cy, 0, cx, cy, r);
+      grad.addColorStop(0, bodyLight);
+      grad.addColorStop(0.6, snakeColor);
+      grad.addColorStop(1, bodyDark);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, r * 1.08, r * 0.92, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = bodyDark;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
     } else {
-      // Path through segment centers: round caps = round head & tail, straight middle
-      const path = segs.map(s => ({ x: s.x * ts + half, y: s.y * ts + half }));
-      ctx.strokeStyle = adjustBrightness(snakeColor, -10);
+      // Body glow (soft outline)
+      ctx.strokeStyle = `rgba(255,255,255,0.15)`;
+      ctx.lineWidth = ts + 4;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(path[0].x, path[0].y);
+      for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x, path[i].y);
+      ctx.stroke();
+
+      // Main body stroke (dark outline so snake stands out from floor)
+      ctx.strokeStyle = SNAKE_OUTLINE_COLOR;
+      ctx.lineWidth = ts + 2;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(path[0].x, path[0].y);
+      for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x, path[i].y);
+      ctx.stroke();
+
+      // Body fill (main color)
+      ctx.strokeStyle = snakeColor;
       ctx.lineWidth = ts - 1;
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.beginPath();
       ctx.moveTo(path[0].x, path[0].y);
-      for (let i = 1; i < path.length; i++) {
-        ctx.lineTo(path[i].x, path[i].y);
-      }
+      for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x, path[i].y);
       ctx.stroke();
 
-      // Round head circle on top (so head is clearly round)
-      ctx.fillStyle = snakeColor;
-      ctx.beginPath();
-      ctx.arc(path[0].x, path[0].y, half - 0.5, 0, Math.PI * 2);
-      ctx.fill();
+      // Scale shine: centered on body centerline (soft oval highlights)
+      for (let i = 1; i < path.length - 1; i += 2) {
+        const p = path[i];
+        const prev = path[i - 1];
+        const next = path[i + 1];
+        const tx = (next.x - prev.x) / 2;
+        const ty = (next.y - prev.y) / 2;
+        const angle = Math.atan2(ty, tx);
+        ctx.fillStyle = 'rgba(255,255,255,0.4)';
+        ctx.beginPath();
+        ctx.ellipse(p.x, p.y, ts * 0.18, ts * 0.3, angle, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
-      // Round tail circle
-      ctx.fillStyle = adjustBrightness(snakeColor, -10);
+      // Head: oval (elongated in movement direction) so it’s not a perfect circle
+      const headX = path[0].x;
+      const headY = path[0].y;
+      const headR = half - 0.5;
+      const dir = getHeadDirection(segs, ts);
+      const angle = Math.atan2(dir.dy, dir.dx);
+      const rFwd = headR * 1.08;   // slightly longer forward
+      const rSide = headR * 0.92;  // slightly narrower sideways
+      const headPath = new Path2D();
+      headPath.ellipse(headX, headY, rFwd, rSide, angle, 0, Math.PI * 2);
+      const gradient = ctx.createRadialGradient(
+        headX - dir.dx * headR * 0.3, headY - dir.dy * headR * 0.3, 0,
+        headX, headY, Math.max(rFwd, rSide)
+      );
+      gradient.addColorStop(0, bodyLight);
+      gradient.addColorStop(0.5, snakeColor);
+      gradient.addColorStop(1, bodyDark);
+      ctx.fillStyle = gradient;
+      ctx.fill(headPath);
+      ctx.strokeStyle = bodyDark;
+      ctx.lineWidth = 1.5;
+      ctx.stroke(headPath);
+
+      // Tail: darker circle with small tip
+      const tailX = path[path.length - 1].x;
+      const tailY = path[path.length - 1].y;
+      ctx.fillStyle = bodyDark;
       ctx.beginPath();
-      ctx.arc(path[path.length - 1].x, path[path.length - 1].y, half - 0.5, 0, Math.PI * 2);
+      ctx.arc(tailX, tailY, headR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = adjustBrightness(snakeColor, -35);
+      ctx.beginPath();
+      ctx.arc(tailX, tailY, headR * 0.5, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // Eyes on head
+    // Cute face (direction-aware)
     const head = segs[0];
     const cx = head.x * ts + half;
     const cy = head.y * ts + half;
-    const eyeRadius = Math.max(2, ts / 6);
-    const pupilRadius = Math.max(1, ts / 12);
-    const eyeOffsetX = Math.max(3, ts / 4);
-    const eyeOffsetY = -Math.max(2, ts / 5);
-    ctx.fillStyle = adjustBrightness(snakeColor, 40);
+    const dir = getHeadDirection(segs, ts);
+    const faceUpX = -dir.dx;
+    const faceUpY = -dir.dy;
+    const faceRightX = -dir.dy;
+    const faceRightY = dir.dx;
+
+    const eyeSize = Math.max(3, ts * 0.32);
+    const eyeX = ts * 0.28;
+    const pupilSize = Math.max(1.5, ts * 0.12);
+    const highlightSize = Math.max(1, ts * 0.08);
+    // Eyes centered on head: symmetric left/right on line perpendicular to direction
+    const leftEyeX = cx - dir.dx * eyeX;
+    const leftEyeY = cy - dir.dy * eyeX;
+    const rightEyeX = cx + dir.dx * eyeX;
+    const rightEyeY = cy + dir.dy * eyeX;
+
+    function drawOneEye(ex, ey) {
+      ctx.fillStyle = 'rgba(255,255,255,0.95)';
+      ctx.beginPath();
+      ctx.arc(ex, ey, eyeSize, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+      const irisColor = adjustBrightness(snakeColor, 55);
+      ctx.fillStyle = irisColor;
+      ctx.beginPath();
+      ctx.arc(ex, ey, eyeSize * 0.65, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#6b7ba8';
+      ctx.beginPath();
+      ctx.arc(ex, ey, pupilSize, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.beginPath();
+      ctx.arc(ex - pupilSize * 0.4, ey - pupilSize * 0.4, highlightSize, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    drawOneEye(leftEyeX, leftEyeY);
+    drawOneEye(rightEyeX, rightEyeY);
+
+    // Smile (small arc below eyes, direction-aware)
+    const smileDist = ts * 0.18;
+    const smileCX = cx + faceUpX * (-smileDist);
+    const smileCY = cy + faceUpY * (-smileDist);
+    const smileRadius = ts * 0.2;
+    const smileStart = Math.atan2(-faceRightY, -faceRightX);
+    ctx.strokeStyle = 'rgba(107, 123, 168, 0.5)';
+    ctx.lineWidth = Math.max(1, ts * 0.08);
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.arc(cx - eyeOffsetX, cy + eyeOffsetY, eyeRadius, 0, Math.PI * 2);
+    ctx.arc(smileCX, smileCY, smileRadius, smileStart + 0.3, smileStart + Math.PI - 0.3);
+    ctx.stroke();
+
+    // Blush (two small pink circles)
+    const blushDist = ts * 0.38;
+    const blushY = ts * 0.15;
+    const blushX = ts * 0.35;
+    const blushR = Math.max(2, ts * 0.12);
+    const blush1X = cx + faceUpX * blushY + faceRightX * (-blushX);
+    const blush1Y = cy + faceUpY * blushY + faceRightY * (-blushX);
+    const blush2X = cx + faceUpX * blushY + faceRightX * blushX;
+    const blush2Y = cy + faceUpY * blushY + faceRightY * blushX;
+    ctx.fillStyle = 'rgba(248, 200, 212, 0.55)';
+    ctx.beginPath();
+    ctx.arc(blush1X, blush1Y, blushR, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = SNAKE_OUTLINE_COLOR;
     ctx.beginPath();
-    ctx.arc(cx - eyeOffsetX, cy + eyeOffsetY, pupilRadius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = adjustBrightness(snakeColor, 40);
-    ctx.beginPath();
-    ctx.arc(cx + eyeOffsetX, cy + eyeOffsetY, eyeRadius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = SNAKE_OUTLINE_COLOR;
-    ctx.beginPath();
-    ctx.arc(cx + eyeOffsetX, cy + eyeOffsetY, pupilRadius, 0, Math.PI * 2);
+    ctx.arc(blush2X, blush2Y, blushR, 0, Math.PI * 2);
     ctx.fill();
 
-    // Name above head (positioned well above the head so it's visible)
+    // Name above head – black for contrast on pastel floor
     const nameOffsetY = half + Math.max(14, ts * 0.85);
-    ctx.fillStyle = snakeColor;
     ctx.font = `bold ${Math.max(10, ts * 0.75)}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.lineWidth = 2;
+    ctx.strokeText(player.name, cx, cy - nameOffsetY);
+    ctx.fillStyle = '#1a1a2e';
     ctx.fillText(player.name, cx, cy - nameOffsetY);
     ctx.textBaseline = 'alphabetic';
   }
@@ -632,7 +788,7 @@ function drawScoreboard() {
     const className = isLocal ? 'score-item local' : 'score-item';
     const length = player.snake ? player.snake.length : 0;
     const weaponIcon = player.weapon ? weaponIcons[player.weapon] : '';
-    const nameColor = player.color || (isLocal ? '#4ecca3' : '#ccc');
+    const nameColor = player.color || (isLocal ? '#2db896' : '#e07a6b');
     html += `<div class="${className}">
       <span class="name" style="color:${nameColor}">${escapeHtml(player.name)} ${weaponIcon}</span>
       <span class="score">${length}</span>
@@ -661,11 +817,10 @@ function drawWeaponUI() {
   const y = canvas.height - boxHeight - padding;
   
   // Background
-  ctx.fillStyle = 'rgba(22, 33, 62, 0.9)';
+  ctx.fillStyle = 'rgba(197, 208, 232, 0.92)';
   ctx.fillRect(x, y, boxWidth, boxHeight);
   
-  // Border
-  ctx.strokeStyle = '#4ecca3';
+  ctx.strokeStyle = '#1e3d4a';
   ctx.lineWidth = 2;
   ctx.strokeRect(x, y, boxWidth, boxHeight);
   
@@ -683,14 +838,13 @@ function drawWeaponUI() {
   
   // Weapon name
   ctx.font = 'bold 14px sans-serif';
-  ctx.fillStyle = '#4ecca3';
+  ctx.fillStyle = '#1a1a2e';
   ctx.textAlign = 'left';
   ctx.fillText(localPlayer.weapon, x + 65, y + 20);
   
-  // Ammo count (if weapon has ammo)
   if (localPlayer.weapon === 'GUN' || localPlayer.weapon === 'ROCKET') {
     ctx.font = 'bold 16px sans-serif';
-    ctx.fillStyle = localPlayer.ammo > 0 ? '#ffd93d' : '#ff6b6b';
+    ctx.fillStyle = localPlayer.ammo > 0 ? '#1a1a2e' : '#b91c1c';
     ctx.fillText(`${localPlayer.ammo}`, x + 65, y + 38);
     
     ctx.font = '10px sans-serif';
@@ -699,7 +853,7 @@ function drawWeaponUI() {
   } else {
     // Instructions for sword
     ctx.font = '11px sans-serif';
-    ctx.fillStyle = '#aaa';
+    ctx.fillStyle = '#1a1a2e';
     ctx.fillText('SPACE / CLICK', x + 65, y + 40);
   }
 }
@@ -714,6 +868,11 @@ function adjustBrightness(color, amount) {
 }
 
 // Event listeners
+playBtn.addEventListener('click', () => {
+  startScreen.classList.add('hidden');
+  menu.classList.remove('hidden');
+});
+
 joinBtn.addEventListener('click', () => {
   connect();
 });
@@ -757,6 +916,36 @@ function closeRulesModal() {
     rulesModal.classList.add('hidden');
     rulesModal.setAttribute('aria-hidden', 'true');
   }
+}
+
+if (serverConfigToggle && serverConfig) {
+  serverConfigToggle.addEventListener('click', () => {
+    serverConfig.classList.toggle('hidden');
+    serverConfigToggle.textContent = serverConfig.classList.contains('hidden') ? 'Server (dev)' : 'Hide server';
+  });
+}
+
+if (soundToggle && gameMusic) {
+  try {
+    const saved = localStorage.getItem('snakeMusicMuted');
+    if (saved === 'true') {
+      musicMuted = true;
+      gameMusic.muted = true;
+      soundToggle.textContent = '🔇 Muted';
+    }
+  } catch (e) {}
+  soundToggle.addEventListener('click', () => {
+    musicMuted = !musicMuted;
+    gameMusic.muted = musicMuted;
+    soundToggle.textContent = musicMuted ? '🔇 Muted' : '🔊 Sound';
+    try {
+      localStorage.setItem('snakeMusicMuted', musicMuted ? 'true' : 'false');
+    } catch (e) {}
+    if (!musicMuted && !menu.classList.contains('hidden')) {
+      gameMusic.pause();
+      gameMusic.currentTime = 0;
+    }
+  });
 }
 
 // Initialize

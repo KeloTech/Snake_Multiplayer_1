@@ -7,13 +7,17 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+  <!-- Start Screen -->
+  <div id="startScreen" class="start-screen">
+    <div class="start-screen-bg" style="background-image: url('assets/snake_game_background.png');"></div>
+    <button type="button" id="playBtn" class="btn-play">PLAY</button>
+  </div>
+
   <!-- Menu Overlay -->
-  <div id="menu" class="menu">
+  <div id="menu" class="menu hidden">
     <div class="menu-content">
       <img src="assets/Krypto_snake_image.png" alt="Krypto Snake" class="menu-logo">
       <h1>Snake Multiplayer</h1>
-      <p class="subtitle">Classic grid-based multiplayer snake</p>
-      
       <div class="input-group">
         <label for="nickname">Nickname</label>
         <input type="text" id="nickname" maxlength="20" placeholder="Enter your name" value="Player">
@@ -51,10 +55,14 @@
         </div>
       </div>
       
-      <div class="server-config">
+      <div class="menu-options-row">
+        <button type="button" id="soundToggle" class="menu-option-btn" title="Toggle game music">🔊 Sound</button>
+        <button type="button" id="serverConfigToggle" class="server-config-toggle" title="Show server URL (for developers)">Server (dev)</button>
+      </div>
+      <div id="serverConfig" class="server-config hidden">
         <label for="serverUrl">Server URL</label>
-        <input type="text" id="serverUrl" value="ws://localhost:3001" placeholder="ws://localhost:3001">
-        <p class="server-hint">💡 Use <strong>ws://localhost:3001</strong> for local testing or <strong>https://snake-multiplayer-1.onrender.com/</strong> for production</p>
+        <input type="text" id="serverUrl" value="https://snake-multiplayer-1.onrender.com/" placeholder="https://snake-multiplayer-1.onrender.com/">
+        <p class="server-hint">💡 Production: <strong>https://snake-multiplayer-1.onrender.com/</strong> — Local: <strong>ws://localhost:3001</strong></p>
       </div>
     </div>
   </div>
@@ -84,6 +92,10 @@
     </div>
   </div>
   
+  <audio id="gameMusic" loop preload="auto">
+    <source src="assets/consolegame_1mn2s_186bpm_LOOP.wav" type="audio/wav">
+  </audio>
+
   <!-- Scripts -->
   <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
   <script src="main.js"></script>

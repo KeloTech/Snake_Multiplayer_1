@@ -4,7 +4,7 @@ const { Server } = require('socket.io');
 const PORT = process.env.PORT || 3001;
 const TICK_RATE = 24; // ticks per second (increased for input responsiveness)
 const TICK_INTERVAL = 1000 / TICK_RATE;
-const MOVE_EVERY_N_TICKS = 2; // Snake moves every 2 ticks = 12 moves/sec (same speed as before)
+const MOVE_EVERY_N_TICKS = 8; // Snake moves every 8 ticks = 3 moves/sec (slow, easy to follow)
 const SNAPSHOT_EVERY_N_TICKS = 2; // Broadcast snapshots every 2 ticks = 12 snapshots/sec
 const MAP_WIDTH = 120;
 const MAP_HEIGHT = 120;
